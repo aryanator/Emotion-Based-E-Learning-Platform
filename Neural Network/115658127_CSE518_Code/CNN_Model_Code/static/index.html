@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mathematical Quiz</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #video { border: 1px solid #ccc; }
+        #question-container { margin-top: 20px; }
+        #timer { font-size: 24px; }
+        .option { margin: 5px; }
+        #next-question { display: none; }
+    </style>
+</head>
+<body>
+    <h1>Mathematical Quiz</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+    <button id="start">Start Quiz</button>
+    <button id="next-question" style="display:none;">Next Question</button>
+    <div id="question-container" style="display:none;">
+        <h2 id="question"></h2>
+        <div id="options"></div>
+        <div id="timer"></div>
+    </div>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        const startButton = document.getElementById('start');
+        const nextButton = document.getElementById('next-question');
+        const questionContainer = document.getElementById('question-container');
+        const questionElement = document.getElementById('question');
+        const optionsContainer = document.getElementById('options');
+        const timerElement = document.getElementById('timer');
+
+        let currentQuestionIndex = 0;
+        const totalQuestions = 5;
+        let questions = [];
+        let emotions = [];
+        const captureDuration = 5000; // 5 seconds
+        const frameInterval = 500; // Capture every 500 ms
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(error => {
+                console.error('Error accessing webcam:', error);
+            });
+
+        function startCapturing() {
+            console.log('Starting video capture');
+            const startTime = Date.now();
+            const captureInterval = setInterval(() => {
+                if (Date.now() - startTime >= captureDuration) {
+                    clearInterval(captureInterval);
+                    processCapturedEmotions();
+                    return;
+                }
+                captureAndSendImage();
+            }, frameInterval);
+        }
+
+        function captureAndSendImage() {
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('image', blob);
+
+                fetch('/detect_emotion', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Emotion detection response:', data);
+                    if (data.emotion) {
+                        emotions.push(data.emotion);
+                        console.log('Detected emotion:', data.emotion);
+                    } else {
+                        console.error('Failed to detect emotion');
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            });
+        }
+
+        function processCapturedEmotions() {
+            console.log('Processing captured emotions:', emotions);
+            if (emotions.length > 0) {
+                const mostCommonEmotion = getMostCommonEmotion(emotions);
+                console.log('Most common emotion:', mostCommonEmotion);
+                fetch('/get_question', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ emotion: mostCommonEmotion })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Received question data:', data);
+                    questions = [data]; // Start with the first question
+                    displayQuestion();
+                })
+                .catch(error => console.error('Error:', error));
+            } else {
+                alert('No emotions detected.');
+            }
+        }
+
+        function getMostCommonEmotion(emotions) {
+            const frequency = {};
+            emotions.forEach(emotion => frequency[emotion] = (frequency[emotion] || 0) + 1);
+            return Object.keys(frequency).reduce((a, b) => frequency[a] > frequency[b] ? a : b);
+        }
+
+        function displayQuestion() {
+            console.log('Displaying question');
+            if (currentQuestionIndex < totalQuestions) {
+                const question = questions[currentQuestionIndex];
+                console.log('Current question:', question);
+                questionElement.textContent = question.question;
+                optionsContainer.innerHTML = '';
+                question.options.forEach(option => {
+                    const button = document.createElement('button');
+                    button.classList.add('option');
+                    button.textContent = option;
+                    button.onclick = () => alert(option === question.answer ? 'Correct!' : 'Wrong!');
+                    optionsContainer.appendChild(button);
+                });
+                questionContainer.style.display = 'block';
+                nextButton.style.display = 'none'; // Hide next button initially
+                startTimer();
+            } else {
+                alert('Quiz completed!');
+                questionContainer.style.display = 'none';
+                nextButton.style.display = 'none';
+            }
+        }
+
+        function startTimer() {
+            console.log('Starting timer');
+            let timeLeft = 5;
+            timerElement.textContent = `Time Left: ${timeLeft} seconds`;
+            const timer = setInterval(() => {
+                timeLeft -= 1;
+                timerElement.textContent = `Time Left: ${timeLeft} seconds`;
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    timerElement.textContent = 'Time\'s up!';
+                    nextButton.style.display = 'block'; // Show next button when time is up
+                }
+            }, 1000);
+        }
+
+        startButton.addEventListener('click', () => {
+            startCapturing();
+        });
+
+        nextButton.addEventListener('click', () => {
+            currentQuestionIndex++;
+            if (currentQuestionIndex < totalQuestions) {
+                fetch('/get_question', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ emotion: 'neutral' }) // Use default emotion for next questions
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Received new question data:', data);
+                    questions.push(data); // Add the new question to the list
+                    displayQuestion();
+                })
+                .catch(error => console.error('Error:', error));
+            }
+        });
+    </script>
+</body>
+</html>
